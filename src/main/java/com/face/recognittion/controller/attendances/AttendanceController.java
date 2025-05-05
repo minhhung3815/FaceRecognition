@@ -17,10 +17,23 @@ import java.util.Base64;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.HashMap;
+import java.util.Map;
+import org.opencv.core.Mat;
+import org.opencv.imgcodecs.Imgcodecs;
+import org.springframework.beans.factory.annotation.Value;
 
 @RestController
 @RequestMapping("/api/attendances")
 public class AttendanceController {
+
+    @Value("${zalo.api.key}")
+    private String zaloApiKey;
 
     private final ImageStorageService imageStorageService;
     private final GridFsService gridFsService;
@@ -84,9 +97,46 @@ public class AttendanceController {
             Path filePath = storagePath.resolve(fileName);
             Files.write(filePath, imageBytes);
 
-            //Logic for face recognition
+            // Load the image using OpenCV
+            String imagePath = filePath.toString(); // Use the full path to the saved file
+            Mat image = Imgcodecs.imread(imagePath);
 
-            Boolean isFaceRecognized = true; // Placeholder for actual face recognition logic
+            if (image.empty()) {
+                return ResponseEntity.badRequest().body("Failed to load image.");
+            }
+
+            // Convert the image to a list of pixels
+            byte[] imagePixels = new byte[(int) (image.total() * image.channels())];
+            image.get(0, 0, imagePixels);
+
+            // Prepare the API request payload
+            Map<String, Object> data = new HashMap<>();
+            data.put("uid", 0);
+            data.put("image", imagePixels);
+            data.put("url", null);
+
+            // Convert the payload to JSON
+            ObjectMapper objectMapper = new ObjectMapper();
+            String jsonPayload = objectMapper.writeValueAsString(data);
+
+            // Define the API endpoint and headers
+            String endPoint = "https://api.zalo.ai/analyst_face_dev";
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(endPoint))
+                    .header("Content-Type", "application/json")
+                    .header("apikey", zaloApiKey) // Use the API key from the environment
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonPayload))
+                    .build();
+
+            // Send the API request
+            HttpClient client = HttpClient.newHttpClient();
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            // Parse the API response
+            Map<String, Object> resp = objectMapper.readValue(response.body(), Map.class);
+
+            // Check the response for face recognition result
+            Boolean isFaceRecognized = (Boolean) resp.get("recognized"); // Adjust key based on API response
             if (!isFaceRecognized) {
                 return ResponseEntity.badRequest().body("Face not recognized.");
             }
